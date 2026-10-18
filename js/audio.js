@@ -21,17 +21,24 @@ export function createAudio() {
   function unlock() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
-    if (!ctx) {
-      ctx = new AC();
-      master = ctx.createGain();
-      master.gain.value = 0.22;
-      master.connect(ctx.destination);
-      const len = Math.floor(ctx.sampleRate * 0.25);
-      noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
-      const data = noiseBuf.getChannelData(0);
-      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    try {
+      if (!ctx) {
+        ctx = new AC();
+        master = ctx.createGain();
+        master.gain.value = 0.22;
+        master.connect(ctx.destination);
+        const len = Math.floor(ctx.sampleRate * 0.25);
+        noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+        const data = noiseBuf.getChannelData(0);
+        for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+      }
+      if (ctx.state === "suspended") {
+        const pending = ctx.resume();
+        if (pending && typeof pending.catch === "function") pending.catch(() => {});
+      }
+    } catch {
+      ctx = null;
     }
-    if (ctx.state === "suspended") ctx.resume();
   }
 
   function setMuted(value) {
@@ -83,6 +90,14 @@ export function createAudio() {
 
   function flush(sfx) {
     if (!ctx || muted) return;
+    try {
+      flushNow(sfx);
+    } catch {
+      ctx = null;
+    }
+  }
+
+  function flushNow(sfx) {
     if (sfx.shoot && throttled("shoot", 0.09)) {
       noise(0.03, 0.05, 400);
       tone(210, 0.04, "sine", 0.04, 140);

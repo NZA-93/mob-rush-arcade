@@ -117,44 +117,74 @@ function hazardTexture() {
   }, 128, 64);
 }
 
-const textCache = new Map();
-function textTexture(text, color, w = 256, h = 96) {
-  const key = `${w}x${h}|${color}|${text}`;
-  const hit = textCache.get(key);
-  if (hit) return hit;
-  const tex = canvasTex((g, width, height) => {
-    g.clearRect(0, 0, width, height);
-    g.font = `800 ${Math.floor(height * 0.46)}px Trebuchet MS, Segoe UI, sans-serif`;
-    g.textAlign = "center";
-    g.textBaseline = "middle";
-    g.lineWidth = Math.max(4, height * 0.08);
-    g.strokeStyle = "rgba(0,0,0,0.72)";
-    g.strokeText(text, width / 2, height / 2 + 1);
-    g.fillStyle = color;
-    g.fillText(text, width / 2, height / 2 + 1);
-  }, w, h);
-  textCache.set(key, tex);
+const liveTextures = [];
+
+function makeLiveTexture(w, h) {
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d", { alpha: true });
+  const tex = new CanvasTexture(canvas);
+  tex.colorSpace = SRGBColorSpace;
+  tex.userData.ctx = ctx;
+  tex.userData.live = true;
+  liveTextures.push(tex);
   return tex;
 }
 
-function cardTexture(kind) {
+function paintLabel(tex, text, color) {
+  const ctx = tex && tex.userData.ctx;
+  if (!ctx) return;
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = `800 ${Math.floor(h * 0.46)}px Trebuchet MS, Segoe UI, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = Math.max(4, h * 0.08);
+  ctx.strokeStyle = "rgba(0,0,0,0.72)";
+  ctx.strokeText(text, w / 2, h / 2 + 1);
+  ctx.fillStyle = color;
+  ctx.fillText(text, w / 2, h / 2 + 1);
+  tex.needsUpdate = true;
+}
+
+function paintCard(tex, kind) {
+  const ctx = tex && tex.userData.ctx;
+  if (!ctx) return;
   const info = BUFFS[kind];
-  const key = `card|${kind}`;
-  const hit = textCache.get(key);
-  if (hit) return hit;
-  const tex = canvasTex((g, w, h) => {
-    g.fillStyle = "rgba(8, 12, 22, 0.2)";
-    g.fillRect(0, 0, w, h);
-    g.font = "800 54px Trebuchet MS, Segoe UI, sans-serif";
-    g.textAlign = "center";
-    g.textBaseline = "middle";
-    g.fillStyle = info.color;
-    g.fillText(info.name, w / 2, h * 0.4);
-    g.font = "700 28px Trebuchet MS, Segoe UI, sans-serif";
-    g.fillStyle = "#f4f7ff";
-    g.fillText(info.line, w / 2, h * 0.74);
-  }, 256, 160);
-  textCache.set(key, tex);
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = "800 54px Trebuchet MS, Segoe UI, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = info ? info.color : "#ffffff";
+  ctx.fillText(info ? info.name : "", w / 2, h * 0.4);
+  ctx.font = "700 28px Trebuchet MS, Segoe UI, sans-serif";
+  ctx.fillStyle = "#f4f7ff";
+  ctx.fillText(info ? info.line : "", w / 2, h * 0.74);
+  tex.needsUpdate = true;
+}
+
+function dropTexture(tex) {
+  if (!tex) return;
+  const index = liveTextures.indexOf(tex);
+  if (index >= 0) liveTextures.splice(index, 1);
+  tex.dispose();
+  tex.userData.ctx = null;
+  tex.image = null;
+}
+
+function liveMap(material, w, h) {
+  const current = material.map;
+  if (current && current.userData.live && current.image && current.image.width === w && current.image.height === h) {
+    return current;
+  }
+  if (current && current.userData.live) dropTexture(current);
+  const tex = makeLiveTexture(w, h);
+  material.map = tex;
+  material.needsUpdate = true;
   return tex;
 }
 
@@ -165,13 +195,21 @@ function world(x, y, layout) {
   };
 }
 
+function isMobile() {
+  const ua = navigator.userAgent || "";
+  if (/iPhone|iPad|iPod|Android/i.test(ua)) return true;
+  return navigator.maxTouchPoints > 1 && window.matchMedia("(pointer: coarse)").matches;
+}
+
 export function createView(canvas) {
+  const mobile = isMobile();
   const renderer = new WebGLRenderer({
     canvas,
-    antialias: (window.devicePixelRatio || 1) < 1.5,
+    antialias: false,
     alpha: false,
-    powerPreference: "high-performance",
+    powerPreference: mobile ? "default" : "high-performance",
     stencil: false,
+    failIfMajorPerformanceCaveat: false,
   });
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.toneMapping = ACESFilmicToneMapping;
@@ -194,7 +232,7 @@ export function createView(canvas) {
   const sun = new DirectionalLight(0xfff1dc, 1.55);
   sun.position.set(4.5, 11, 3.2);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(512, 512);
+  sun.shadow.mapSize.set(mobile ? 256 : 512, mobile ? 256 : 512);
   sun.shadow.camera.near = 2;
   sun.shadow.camera.far = 28;
   sun.shadow.camera.left = -7;
@@ -359,10 +397,11 @@ export function createView(canvas) {
   let blobDetail = -1;
   let blobs = null;
 
-  function mountBlobs(detail) {
+  function mountBlobs(detail, disposeOld = true) {
     if (blobs) {
       scene.remove(blobs);
-      blobs.geometry.dispose();
+      if (disposeOld) blobs.geometry.dispose();
+      blobs = null;
     }
     const geo = new IcosahedronGeometry(1, detail);
     geo.setAttribute("aPhase", new InstancedBufferAttribute(phaseArray, 1));
@@ -503,26 +542,44 @@ export function createView(canvas) {
   let applied = "high";
   let pixelRatio = 1;
 
+  function targetRatio(lite) {
+    if (mobile || lite) return 1;
+    return Math.min(1.5, window.devicePixelRatio || 1);
+  }
+
+  let bufferW = 0;
+  let bufferH = 0;
+
   function applyQuality(mode) {
     applied = mode;
     const lite = mode === "lite";
-    const detail = lite ? 0 : 1;
+    const detail = lite || mobile ? 0 : 1;
     if (detail !== blobDetail) mountBlobs(detail);
     renderer.shadowMap.enabled = !lite;
     sun.castShadow = !lite;
     ground.receiveShadow = !lite;
     track.receiveShadow = !lite;
-    const nextRatio = lite ? 1 : Math.min(1.5, window.devicePixelRatio || 1);
+    const nextRatio = targetRatio(lite);
     if (nextRatio !== pixelRatio) {
       pixelRatio = nextRatio;
       renderer.setPixelRatio(pixelRatio);
       renderer.setSize(cssW, cssH, false);
+      bufferW = cssW;
+      bufferH = cssH;
     }
   }
 
   function resize(w, h) {
-    cssW = Math.max(1, w);
-    cssH = Math.max(1, h);
+    const nextW = Math.max(1, Math.round(w));
+    const nextH = Math.max(1, Math.round(h));
+    const ratio = targetRatio(applied === "lite");
+    const same =
+      bufferW > 0 &&
+      Math.abs(nextW - cssW) < 8 &&
+      Math.abs(nextH - cssH) < 8 &&
+      ratio === pixelRatio;
+    cssW = nextW;
+    cssH = nextH;
     const aspect = cssW / cssH;
     camera.aspect = aspect;
     const portrait = aspect < 0.85;
@@ -531,8 +588,12 @@ export function createView(canvas) {
     camBase.z = portrait ? 3.35 : 2.55;
     camBase.lookZ = portrait ? -6.2 : -6.8;
     camera.updateProjectionMatrix();
+    if (same) return;
     applyQuality(applied);
+    renderer.setPixelRatio(pixelRatio);
     renderer.setSize(cssW, cssH, false);
+    bufferW = cssW;
+    bufferH = cssH;
   }
 
   function placeCamera(state) {
@@ -670,8 +731,7 @@ export function createView(canvas) {
       mat.emissiveIntensity = 0.55 + flash * 0.8;
       const key = `${g.label}|${bad ? "b" : "g"}`;
       if (slot.key !== key) {
-        slot.label.material.map = textTexture(g.label, bad ? "#ffd0dc" : "#e9fff4", 256, 96);
-        slot.label.material.needsUpdate = true;
+        paintLabel(liveMap(slot.label.material, 256, 96), g.label, bad ? "#ffd0dc" : "#e9fff4");
         slot.key = key;
       }
       slot.label.position.set(0, 1.02, 0);
@@ -714,8 +774,7 @@ export function createView(canvas) {
         const info = BUFFS[c.kind];
         slot.slab.material.color.set(info.color);
         slot.slab.material.emissive.set(info.color);
-        slot.face.material.map = cardTexture(c.kind);
-        slot.face.material.needsUpdate = true;
+        paintCard(liveMap(slot.face.material, 256, 160), c.kind);
         slot.kind = c.kind;
       }
       slot.slab.material.emissiveIntensity = near ? 0.55 : 0.18;
@@ -751,8 +810,7 @@ export function createView(canvas) {
     fort.material.emissiveIntensity = 0.35 + (state.baseFlash || 0) * 0.9;
     const hpText = `${Math.ceil(state.base.hp)}`;
     if (baseLabel.userData.key !== hpText) {
-      baseLabel.material.map = textTexture(hpText, "#ffe1c4", 256, 80);
-      baseLabel.material.needsUpdate = true;
+      paintLabel(liveMap(baseLabel.material, 256, 80), hpText, "#ffe1c4");
       baseLabel.userData.key = hpText;
     }
     baseLabel.visible = state.phase !== "menu";
@@ -771,8 +829,7 @@ export function createView(canvas) {
   function showSprite(sprite, text, color, x, y, z, sx, sy, opacity) {
     const key = `${text}|${color}`;
     if (sprite.userData.key !== key) {
-      sprite.material.map = textTexture(text, color);
-      sprite.material.needsUpdate = true;
+      paintLabel(liveMap(sprite.material, 256, 96), text, color);
       sprite.userData.key = key;
     }
     sprite.visible = true;
@@ -813,7 +870,53 @@ export function createView(canvas) {
     } else banner.visible = false;
   }
 
+  function forgetSprite(sprite) {
+    sprite.userData.key = "";
+    sprite.visible = false;
+    if (sprite.material.map && sprite.material.map.userData.live) {
+      sprite.material.map = null;
+      sprite.material.needsUpdate = true;
+    }
+  }
+
+  function releaseLevel(options) {
+    const disposeGpu = !options || options.disposeGpu !== false;
+    forgetSprite(baseLabel);
+    forgetSprite(powerL);
+    forgetSprite(powerR);
+    forgetSprite(banner);
+    for (let i = 0; i < floaters.length; i++) forgetSprite(floaters[i]);
+    for (let i = 0; i < gatePool.length; i++) {
+      forgetSprite(gatePool[i].label);
+      gatePool[i].key = "";
+    }
+    for (let i = 0; i < cardPool.length; i++) {
+      const face = cardPool[i].face.material;
+      cardPool[i].kind = "";
+      if (face.map && face.map.userData.live) {
+        face.map = null;
+        face.needsUpdate = true;
+      }
+    }
+    if (disposeGpu) {
+      while (liveTextures.length) dropTexture(liveTextures[0]);
+      sun.shadow.dispose();
+    } else {
+      liveTextures.length = 0;
+    }
+    sun.shadow.map = null;
+    sun.shadow.mapPass = null;
+    sun.shadow.needsUpdate = true;
+    shadows.count = 0;
+    splats.count = 0;
+    specks.count = 0;
+    mountBlobs(mobile || applied === "lite" ? 0 : 1, disposeGpu);
+    if (disposeGpu) renderer.renderLists.dispose();
+  }
+
   function draw(state) {
+    const gl = renderer.getContext();
+    if (!gl || gl.isContextLost()) return;
     if (state.quality !== applied) applyQuality(state.quality);
     jellyUniforms.uTime.value = state.time || 0;
     jellyUniforms.uWobble.value = state.reduced ? 0.25 : 1;
@@ -832,5 +935,29 @@ export function createView(canvas) {
   applyQuality("high");
   resize(canvas.clientWidth || 400, canvas.clientHeight || 780);
 
-  return { resize, draw, renderer };
+  const loseExt = renderer.getContext().getExtension("WEBGL_lose_context");
+
+  function isLost() {
+    const gl = renderer.getContext();
+    return !gl || gl.isContextLost();
+  }
+
+  function recover() {
+    if (!isLost()) return;
+    try {
+      loseExt?.restoreContext();
+    } catch {
+      /* the browser restores the context on its own */
+    }
+  }
+
+  return {
+    resize,
+    draw,
+    releaseLevel,
+    recover,
+    isLost,
+    liveTextureCount: () => liveTextures.length,
+    renderer,
+  };
 }

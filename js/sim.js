@@ -114,6 +114,7 @@ export function createState() {
     threat: 0,
     reduced: false,
     quality: "high",
+    epoch: 0,
     cards: [],
     cardT: 2.8,
     cardSerial: 1,
@@ -344,6 +345,7 @@ export function loadLevel(state, level) {
   state.baseFlash = 0;
   state.cards.length = 0;
   state.cardT = 2.8;
+  state.epoch += 1;
   state.cardRng = mulberry32(Math.imul(level, 4049) + 91);
   syncPositions(state);
 

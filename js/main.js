@@ -139,8 +139,39 @@ function hideOverlay() {
   overlay.hidden = true;
 }
 
+let crashed = false;
+let wantResume = false;
+let seenEpoch = 0;
+
+function showRecover() {
+  crashed = true;
+  wantResume = false;
+  titleEl.textContent = "TAP TO RESTART";
+  blurbEl.textContent = "The picture froze. Tap to restart.";
+  helpEl.hidden = true;
+  hintEl.hidden = true;
+  resultEl.hidden = true;
+  startBtn.textContent = "TAP TO RESTART";
+  overlay.hidden = false;
+}
+
 function startGame() {
-  audio.unlock();
+  if (view.isLost()) {
+    wantResume = true;
+    try {
+      view.recover();
+    } catch {
+      /* the browser restores the context on its own */
+    }
+    return;
+  }
+  crashed = false;
+  wantResume = false;
+  try {
+    audio.unlock();
+  } catch {
+    /* sound is optional */
+  }
   beginRun(state);
   hideOverlay();
   wasDead = false;
@@ -214,14 +245,32 @@ let fpsFrames = 0;
 let fpsTime = 0;
 const STEP = 1000 / 60;
 
+function buzz(ms) {
+  try {
+    navigator.vibrate?.(ms);
+  } catch {
+    /* iOS throws when vibration is outside a gesture */
+  }
+}
+
 function frame(now) {
   requestAnimationFrame(frame);
+  if (crashed) return;
   let dt = now - last;
   last = now;
   if (document.hidden) {
     acc = 0;
     return;
   }
+  try {
+    frameStep(dt);
+  } catch (err) {
+    console.error(err);
+    showRecover();
+  }
+}
+
+function frameStep(dt) {
   if (dt > 250) dt = 250;
   fpsFrames += 1;
   fpsTime += dt;
@@ -244,11 +293,16 @@ function frame(now) {
     steps += 1;
   }
   audio.flush(state.sfx);
-  if (state.sfx.win) navigator.vibrate?.(16);
-  else if (state.sfx.lose) navigator.vibrate?.(36);
-  else if (state.sfx.giant) navigator.vibrate?.(10);
+  if (state.sfx.win) buzz(16);
+  else if (state.sfx.lose) buzz(36);
+  else if (state.sfx.giant) buzz(10);
   saveBest();
 
+  if (state.epoch !== seenEpoch) {
+    const previous = seenEpoch;
+    seenEpoch = state.epoch;
+    if (previous > 0) view.releaseLevel();
+  }
   view.draw(state);
   syncHud(false);
 }
@@ -323,6 +377,31 @@ window.addEventListener("blur", () => {
   pointerId = null;
 });
 
+canvas.addEventListener("webglcontextlost", (event) => {
+  event.preventDefault();
+  showRecover();
+});
+canvas.addEventListener("webglcontextrestored", () => {
+  try {
+    view.releaseLevel({ disposeGpu: false });
+    layoutStage();
+    if (wantResume) startGame();
+  } catch (err) {
+    console.error(err);
+    showRecover();
+  }
+});
+window.addEventListener("error", (event) => {
+  if (crashed) return;
+  console.error(event.error || event.message);
+  showRecover();
+});
+window.addEventListener("unhandledrejection", (event) => {
+  if (crashed) return;
+  console.error(event.reason);
+  showRecover();
+});
+
 document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
 window.addEventListener("resize", layoutStage);
 window.visualViewport?.addEventListener("resize", layoutStage);
@@ -355,4 +434,4 @@ requestAnimationFrame(() => {
 });
 requestAnimationFrame(frame);
 
-window.__MOBRUSH = { state, audio, layoutStage, startGame };
+window.__MOBRUSH = { state, audio, layoutStage, startGame, view };
