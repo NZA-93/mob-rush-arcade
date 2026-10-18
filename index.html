@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="description" content="Mob Rush is a portrait arcade crowd shooter. Aim the cannon, multiply through gates, and break the enemy base." />
+  <meta name="description" content="Mob Rush is a portrait arcade crowd shooter. Aim the cannon, multiply through gates, grab a timed shot, and break the enemy base." />
   <title>Mob Rush</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="css/style.css" />
@@ -15,7 +15,9 @@
 <body data-phase="menu">
   <div id="safe-probe"></div>
   <div id="stage">
-    <canvas id="game" width="400" height="780"></canvas>
+    <canvas id="game"></canvas>
+    <div id="flash"></div>
+    <div id="buffs" hidden></div>
     <header id="hud">
       <div class="stat">
         <span>SCORE</span>
@@ -37,15 +39,15 @@
       <div class="card">
         <p class="eyebrow">ARCADE</p>
         <h1 id="title">MOB RUSH</h1>
-        <p id="blurb">Drag to aim. Hold to fire a crowd.</p>
+        <p id="blurb">Drag to aim. Hold to fire a crowd of jelly.</p>
         <dl class="help" id="help">
           <div><dt>x2 x3</dt><dd>multiply</dd></div>
-          <div><dt>+10</dt><dd>add runners</dd></div>
+          <div><dt>CARDS</dt><dd>steer into one</dd></div>
           <div><dt>-5 /2</dt><dd>avoid these</dd></div>
         </dl>
         <p id="result" hidden></p>
         <button id="start" type="button">TAP TO START</button>
-        <p class="hint" id="hint">Break their base. Don't let red reach your cannon.</p>
+        <p class="hint" id="hint">Cards are timed shots. Leave a multiplier gate to grab one. Don't let red reach your cannon.</p>
       </div>
     </div>
   </div>

@@ -1,13 +1,14 @@
+import { BUFFS } from "./buffs.js";
 import { BEST_KEY, MUTE_KEY, VIEW_W } from "./constants.js";
 import { createAudio } from "./audio.js";
 import { computeLayout } from "./level.js";
-import { render } from "./render.js";
+import { createView } from "./render3d.js";
 import { beginRun, boot, clearSfx, createState, spawnRunner, step } from "./sim.js";
 
 const canvas = document.getElementById("game");
 const stage = document.getElementById("stage");
 const hud = document.getElementById("hud");
-const ctx = canvas.getContext("2d", { alpha: false });
+const view = createView(canvas);
 const audio = createAudio();
 const state = createState();
 
@@ -23,6 +24,8 @@ const hintEl = document.getElementById("hint");
 const startBtn = document.getElementById("start");
 const restartBtn = document.getElementById("restart");
 const muteBtn = document.getElementById("mute");
+const buffsEl = document.getElementById("buffs");
+const flashEl = document.getElementById("flash");
 
 const keys = new Set();
 let aimX = null;
@@ -31,6 +34,7 @@ let pointerId = null;
 let shownScore = -1;
 let shownLevel = -1;
 let shownBest = -1;
+let shownBuff = "";
 let wasDead = false;
 
 const reduceQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -93,9 +97,7 @@ function layoutStage() {
   }
   const rect = stage.getBoundingClientRect();
   const viewH = clamp(VIEW_W * (rect.height / Math.max(1, rect.width)), 660, 1040);
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  canvas.width = Math.max(1, Math.round(rect.width * dpr));
-  canvas.height = Math.max(1, Math.round(rect.height * dpr));
+  view.resize(rect.width, rect.height);
   const safe = readInsets();
   const scale = viewH / Math.max(1, rect.height);
   const topInset = hud.offsetHeight * scale;
@@ -114,7 +116,7 @@ function viewX(clientX) {
 
 function showMenu() {
   titleEl.textContent = "MOB RUSH";
-  blurbEl.textContent = "Drag to aim. Hold to fire a crowd.";
+  blurbEl.textContent = "Drag to aim. Hold to fire a crowd of jelly.";
   helpEl.hidden = false;
   resultEl.hidden = true;
   hintEl.hidden = false;
@@ -190,6 +192,20 @@ function syncHud(force) {
   }
   if (state.phase !== "dead") wasDead = false;
   document.title = state.phase === "play" ? `L${state.level} · ${fmt(state.score)} · Mob Rush` : "Mob Rush";
+  const bits = [];
+  if (state.shot) bits.push(`${BUFFS[state.shot.id].name} ${Math.ceil(state.shot.t)}s`);
+  if (state.shieldT > 0) bits.push(`SHIELD ${Math.ceil(state.shieldT)}s`);
+  if (state.freezeT > 0) bits.push(`FREEZE ${Math.ceil(state.freezeT)}s`);
+  if (state.chargeReady) bits.push("GIANT");
+  const line = bits.join("   ");
+  if (line !== shownBuff) {
+    shownBuff = line;
+    buffsEl.textContent = line;
+    buffsEl.hidden = line.length === 0;
+  }
+  const flash = state.flash || 0;
+  flashEl.style.opacity = flash > 0.02 ? String(Math.min(0.45, flash * 0.5)) : "0";
+  flashEl.style.background = `rgb(${state.flashRGB || "255,255,255"})`;
 }
 
 let last = performance.now();
@@ -233,10 +249,7 @@ function frame(now) {
   else if (state.sfx.giant) navigator.vibrate?.(10);
   saveBest();
 
-  const scaleX = canvas.width / VIEW_W;
-  const scaleY = canvas.height / state.layout.viewH;
-  ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
-  render(ctx, state);
+  view.draw(state);
   syncHud(false);
 }
 

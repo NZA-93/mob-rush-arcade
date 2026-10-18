@@ -9,6 +9,9 @@ export function createAudio() {
     base: 0,
     giant: 0,
     ready: 0,
+    pick: 0,
+    bomb: 0,
+    freeze: 0,
   };
   let ctx = null;
   let master = null;
@@ -104,6 +107,18 @@ export function createAudio() {
     }
     if (sfx.ready && throttled("ready", 0.1)) {
       tone(880, 0.07, "sine", 0.06, 1320);
+    }
+    if (sfx.pick && throttled("pick", 0.12)) {
+      tone(660, 0.07, "sine", 0.06, 880);
+      tone(990, 0.1, "triangle", 0.05, 1320, 0.06);
+    }
+    if (sfx.bomb && throttled("bomb", 0.1)) {
+      noise(0.12, 0.08, 180);
+      tone(90, 0.18, "sine", 0.08, 40);
+    }
+    if (sfx.freeze && throttled("freeze", 0.2)) {
+      tone(1400, 0.12, "sine", 0.04, 700);
+      tone(1800, 0.16, "triangle", 0.03, 900, 0.04);
     }
     if (sfx.win) {
       tone(523, 0.12, "sine", 0.07, 523, 0);

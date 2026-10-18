@@ -64,6 +64,31 @@ canvas {
   touch-action: none;
 }
 
+#flash {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0;
+}
+
+#buffs {
+  position: absolute;
+  z-index: 2;
+  top: calc(46px + env(safe-area-inset-top));
+  left: 8px;
+  right: 8px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #e7fbff;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.75);
+  pointer-events: none;
+}
+
+#buffs[hidden] { display: none; }
+
 #hud {
   position: absolute;
   top: 0;

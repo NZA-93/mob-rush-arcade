@@ -1,6 +1,6 @@
 # Mob Rush
 
-A portrait arcade crowd shooter. Drag the cannon, hold to fire, multiply through gates, and break the enemy base before the red crowd reaches you. Levels are endless and keep getting harder. There is no village, no shop, no currency, and no upgrades.
+A portrait arcade crowd shooter. Drag the cannon, hold to fire jelly blobs, multiply through gates, and break the enemy base before the red crowd reaches you. Levels are endless and keep getting harder. There is no village, no shop, no currency, and no upgrades.
 
 **Play:** https://nza-93.github.io/mob-rush-arcade/
 
@@ -16,6 +16,15 @@ A portrait arcade crowd shooter. Drag the cannon, hold to fire, multiply through
 - Reach the **enemy base** at the top to damage it. Empty the bar to clear the level.
 - If a red runner reaches **your cannon**, the run is over.
 - Keep firing to charge a **giant**. The next shot is a big runner that trades with several enemies.
+- **Option cards** scroll down the lane. A row is a choice of two or three. Steer the cannon into one to take it. The others disappear. Each buff is timed (a few seconds), then it is gone:
+  - **Spread** fires a 3-way shot
+  - **Rapid** fires faster
+  - **Pierce** fires a big blob that keeps going
+  - **Homing** bends shots toward the red crowd
+  - **Bombs** lobs blobs that splash on impact
+  - **Shield** puts a wall in front of the cannon
+  - **Freeze** stops the red crowd for a moment
+- The cards are placed off the best multiplier, so grabbing one means leaving an **x2** or **x3** for a while.
 - Some gates **slide**, and later levels add **moving blocks**. Steer the stream around them.
 - **Score**, **level**, and **best** are on screen. Best is saved in this browser (`localStorage`).
 - **Restart** (or the **R** key) throws the run away instantly and starts again at level 1.
@@ -25,7 +34,7 @@ Clear a level and the next one starts on its own. Bases get tougher, enemy waves
 
 ## Run it locally
 
-The game is a static site (vanilla ES modules, Canvas, and WebAudio). Modules need a local server:
+The game is a static site (vanilla ES modules, Three.js, and WebAudio). The view is a tilted 3D lane: blue and red blobs are instanced jelly, with a simpler shadow and geometry path if the frame rate drops. Modules need a local server:
 
 ```bash
 python3 -m http.server 5173

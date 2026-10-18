@@ -13,6 +13,7 @@ import {
   SCORE_KILL,
   VIEW_W,
 } from "./constants.js";
+import { BUFFS, buffPool } from "./buffs.js";
 import { computeLayout, generateLevel, placeGateY, playerLanePower } from "./level.js";
 import { mulberry32 } from "./rng.js";
 
@@ -113,6 +114,24 @@ export function createState() {
     threat: 0,
     reduced: false,
     quality: "high",
+    cards: [],
+    cardT: 2.8,
+    cardSerial: 1,
+    cardRng: mulberry32(1),
+    shot: null,
+    shieldT: 0,
+    shieldHp: 0,
+    freezeT: 0,
+    splats: Array.from({ length: 40 }, () => ({
+      alive: false,
+      age: 0,
+      life: 0.32,
+      x: 0,
+      y: 0,
+      team: 0,
+      r: 6,
+    })),
+    splatI: 0,
     sfx: {
       shoot: 0,
       good: 0,
@@ -123,6 +142,9 @@ export function createState() {
       win: 0,
       lose: 0,
       ready: 0,
+      pick: 0,
+      bomb: 0,
+      freeze: 0,
     },
   };
   clearRunners(state);
@@ -139,6 +161,9 @@ export function clearSfx(sfx) {
   sfx.win = 0;
   sfx.lose = 0;
   sfx.ready = 0;
+  sfx.pick = 0;
+  sfx.bomb = 0;
+  sfx.freeze = 0;
 }
 
 export function clearRunners(state) {
@@ -174,18 +199,65 @@ export function spawnRunner(state, team, x, y, opts = {}) {
   r.r = opts.r ?? (r.giant ? 14 : 6.5);
   r.mask = opts.mask ?? 0;
   r.phase = state.rng() * Math.PI * 2;
-    r.bias = opts.bias ?? (team === 1 ? (state.rng() * 2 - 1) * 18 : 0);
-    r.wait = opts.wait ?? 0;
-    r.born = state.frame;
+  r.bias = opts.bias ?? (team === 1 ? (state.rng() * 2 - 1) * 18 : 0);
+  r.wait = opts.wait ?? 0;
+  r.born = state.frame;
+  r.bomb = !!opts.bomb;
+  r.homing = !!opts.homing;
+  r.squash = 0;
   state.counts[team] += 1;
   return r;
 }
 
+function addSplat(state, x, y, team, radius) {
+  const s = state.splats[state.splatI];
+  state.splatI = (state.splatI + 1) % state.splats.length;
+  s.alive = true;
+  s.age = 0;
+  s.life = 0.34;
+  s.x = x;
+  s.y = y;
+  s.team = team;
+  s.r = radius;
+}
+
+function explode(state, x, y) {
+  const rad = 48;
+  const rad2 = rad * rad;
+  state.sfx.bomb = 1;
+  state.shake = Math.min(14, state.shake + 3.6);
+  state.flash = Math.min(1, state.flash + 0.18);
+  state.flashRGB = "255,176,90";
+  burst(state, x, y, "#ffb15a", 12, 190);
+  const runners = state.runners;
+  for (let i = 0; i < MAX_RUNNERS; i++) {
+    const e = runners[i];
+    if (!e.alive || e.team !== 1) continue;
+    const dx = e.x - x;
+    const dy = e.y - y;
+    if (dx * dx + dy * dy > rad2) continue;
+    const d = Math.min(2, e.hp);
+    e.hp -= d;
+    e.squash = 1;
+    state.score += d * SCORE_KILL;
+    if (e.hp <= 0) killRunner(state, e);
+  }
+}
+
 function killRunner(state, r) {
   if (!r.alive) return;
+  const bomb = r.bomb && r.team === 0;
+  const x = r.x;
+  const y = r.y;
+  const team = r.team;
+  const radius = r.r;
   r.alive = false;
-  state.counts[r.team] = Math.max(0, state.counts[r.team] - 1);
+  r.bomb = false;
+  r.homing = false;
+  state.counts[team] = Math.max(0, state.counts[team] - 1);
   state.free.push(r.i);
+  addSplat(state, x, y, team, radius);
+  if (bomb) explode(state, x, y);
 }
 
 function burst(state, x, y, color, n, speed) {
@@ -270,6 +342,9 @@ export function loadLevel(state, level) {
   state.dmgFloat = 0;
   state.threat = 0;
   state.baseFlash = 0;
+  state.cards.length = 0;
+  state.cardT = 2.8;
+  state.cardRng = mulberry32(Math.imul(level, 4049) + 91);
   syncPositions(state);
 
   const n = gen.tune.initialEnemy;
@@ -285,6 +360,13 @@ export function loadLevel(state, level) {
   census(state);
 }
 
+function resetBuffs(state) {
+  state.shot = null;
+  state.shieldT = 0;
+  state.shieldHp = 0;
+  state.freezeT = 0;
+}
+
 export function boot(state) {
   state.phase = "menu";
   state.score = 0;
@@ -292,6 +374,7 @@ export function boot(state) {
   state.chargeReady = false;
   state.cannonX = VIEW_W / 2;
   state.level = 1;
+  resetBuffs(state);
   loadLevel(state, 1);
 }
 
@@ -302,6 +385,7 @@ export function beginRun(state) {
   state.cannonX = VIEW_W / 2;
   state.shake = 0;
   state.phase = "play";
+  resetBuffs(state);
   loadLevel(state, 1);
 }
 
@@ -359,6 +443,14 @@ function updateFx(state, dt) {
   for (let i = 0; i < state.gates.length; i++) {
     const g = state.gates[i];
     if (g.flash > 0) g.flash = Math.max(0, g.flash - dt * 2.4);
+  }
+
+  const splats = state.splats;
+  for (let i = 0; i < splats.length; i++) {
+    const s = splats[i];
+    if (!s.alive) continue;
+    s.age += dt;
+    if (s.age >= s.life) s.alive = false;
   }
 }
 
@@ -497,12 +589,33 @@ function tryGates(state, r, prevY) {
   }
 }
 
+function steerHoming(r, enemies, dt) {
+  let best = null;
+  let bestD = 1e12;
+  for (let i = 0; i < enemies.length; i++) {
+    const e = enemies[i];
+    if (!e.alive) continue;
+    if (e.y > r.y + 24) continue;
+    const dx = e.x - r.x;
+    const dy = e.y - r.y;
+    const d = dx * dx + dy * dy;
+    if (d < bestD) {
+      bestD = d;
+      best = e;
+    }
+  }
+  if (!best) return;
+  r.vx += clamp((best.x - r.x) * 6.5, -240, 240) * dt;
+}
+
 function moveRunners(state, dt) {
   const runners = state.runners;
-  const freezeEnemy = state.windup > 0;
+  const freezeEnemy = state.windup > 0 || state.freezeT > 0;
+  let enemies = null;
   for (let i = 0; i < MAX_RUNNERS; i++) {
     const r = runners[i];
     if (!r.alive || r.born === state.frame) continue;
+    if (r.squash > 0) r.squash = Math.max(0, r.squash - dt * 3.4);
     if (freezeEnemy && r.team === 1) continue;
     if (r.wait > 0) {
       r.wait -= dt;
@@ -513,6 +626,16 @@ function moveRunners(state, dt) {
     r.prevY = prevY;
     avoidObstacles(state, r, dt);
     r.vx *= Math.exp(-1.8 * dt);
+    if (r.homing && r.team === 0) {
+      if (!enemies) {
+        enemies = [];
+        for (let j = 0; j < MAX_RUNNERS; j++) {
+          const e = runners[j];
+          if (e.alive && e.team === 1) enemies.push(e);
+        }
+      }
+      steerHoming(r, enemies, dt);
+    }
     // Red runners walk toward the cannon, so the fight is head-on instead of a flank.
     if (r.team === 1) {
       const target = state.cannonX + r.bias;
@@ -587,6 +710,8 @@ function fight(state, a, b) {
   if (d <= 0) return;
   a.hp -= d;
   b.hp -= d;
+  a.squash = 1;
+  b.squash = 1;
   state.score += d * SCORE_KILL;
   state.sfx.hit = 1;
   state.shake = Math.min(12, state.shake + 0.42);
@@ -622,6 +747,20 @@ function boundaries(state) {
         }
       }
       killRunner(state, r);
+    } else if (r.team === 1 && state.shieldT > 0 && state.shieldHp > 0 && r.y >= state.loseY - 28) {
+      const absorbed = Math.min(r.hp, state.shieldHp);
+      r.hp -= absorbed;
+      state.shieldHp -= absorbed;
+      r.squash = 1;
+      state.score += absorbed * SCORE_KILL;
+      state.sfx.hit = 1;
+      if (state.bursts < 10) {
+        state.bursts += 1;
+        burst(state, r.x, r.y, "#9aefff", 5, 90);
+      }
+      if (r.hp <= 0) killRunner(state, r);
+      else r.y = state.loseY - 32;
+      if (state.shieldHp <= 0) state.shieldT = 0;
     } else if (r.team === 1 && r.y >= state.loseY) {
       if (state.phase === "play") leaked = true;
       killRunner(state, r);
@@ -662,12 +801,39 @@ function boundaries(state) {
   }
 }
 
+function shotId(state) {
+  return state.shot ? state.shot.id : null;
+}
+
+function shotInterval(state) {
+  const every = state.tune.fireEvery;
+  const id = shotId(state);
+  if (id === "rapid") return every * 0.42;
+  if (id === "bomb") return every * 1.85;
+  if (id === "pierce") return every * 1.45;
+  if (id === "spread") return every * 1.2;
+  return every;
+}
+
+function noteShot(state, recoil) {
+  state.sfx.shoot = 1;
+  state.muzzle = 1;
+  state.recoil = recoil;
+  const chargeScale = shotId(state) === "rapid" ? 0.55 : 1;
+  state.charge += state.tune.chargePerShot * chargeScale;
+  if (state.charge >= 100) {
+    state.charge = 100;
+    if (!state.chargeReady) {
+      state.chargeReady = true;
+      state.sfx.ready = 1;
+    }
+  }
+}
+
 function fire(state) {
-  const giant = state.chargeReady;
-  const spread = (state.rng() * 2 - 1) * 16;
-  const x = clamp(state.cannonX + spread, LANE_L + 10, LANE_R - 10);
+  const id = shotId(state);
   const y = state.cannonY - 40;
-  if (giant) {
+  if (state.chargeReady) {
     const hp = state.tune.giantHp;
     spawnRunner(state, 0, state.cannonX, y, {
       vx: (state.rng() * 2 - 1) * 10,
@@ -676,6 +842,7 @@ function fire(state) {
       maxHp: hp,
       giant: true,
       r: 14,
+      homing: id === "homing",
     });
     state.charge = 0;
     state.chargeReady = false;
@@ -684,25 +851,62 @@ function fire(state) {
     state.recoil = 10;
     state.shake = Math.min(14, state.shake + 3.5);
     burst(state, state.cannonX, y, "#ffe08a", 14, 160);
-  } else {
-    const spawned = spawnRunner(state, 0, x, y, {
-      vx: (state.rng() * 2 - 1) * 18,
-      vy: -state.tune.playerSpeed * (0.96 + state.rng() * 0.08),
+    return;
+  }
+
+  if (id === "spread") {
+    const speed = state.tune.playerSpeed;
+    let any = false;
+    const angles = [-0.2, 0, 0.2];
+    for (let i = 0; i < angles.length; i++) {
+      const a = angles[i];
+      const spawned = spawnRunner(state, 0, state.cannonX, y, {
+        vx: Math.sin(a) * speed * 0.62,
+        vy: -Math.cos(a) * speed * (0.96 + state.rng() * 0.06),
+      });
+      if (spawned) any = true;
+    }
+    if (any) noteShot(state, 6);
+    return;
+  }
+
+  if (id === "bomb") {
+    const spawned = spawnRunner(state, 0, state.cannonX, y, {
+      vx: (state.rng() * 2 - 1) * 8,
+      vy: -state.tune.playerSpeed * 0.9,
+      hp: 4,
+      maxHp: 4,
+      r: 11,
+      bomb: true,
     });
     if (spawned) {
-      state.sfx.shoot = 1;
-      state.muzzle = 1;
-      state.recoil = 5;
-      state.charge += state.tune.chargePerShot;
-      if (state.charge >= 100) {
-        state.charge = 100;
-        if (!state.chargeReady) {
-          state.chargeReady = true;
-          state.sfx.ready = 1;
-        }
-      }
+      noteShot(state, 8);
+      burst(state, state.cannonX, y, "#ffb15a", 6, 80);
     }
+    return;
   }
+
+  if (id === "pierce") {
+    const hp = 6;
+    const spawned = spawnRunner(state, 0, state.cannonX, y, {
+      vx: (state.rng() * 2 - 1) * 8,
+      vy: -state.tune.playerSpeed * 0.98,
+      hp,
+      maxHp: hp,
+      r: 12,
+    });
+    if (spawned) noteShot(state, 7);
+    return;
+  }
+
+  const spread = (state.rng() * 2 - 1) * (id === "rapid" ? 22 : 16);
+  const x = clamp(state.cannonX + spread, LANE_L + 10, LANE_R - 10);
+  const spawned = spawnRunner(state, 0, x, y, {
+    vx: (state.rng() * 2 - 1) * 18,
+    vy: -state.tune.playerSpeed * (0.96 + state.rng() * 0.08),
+    homing: id === "homing",
+  });
+  if (spawned) noteShot(state, 5);
 }
 
 function spawnEnemies(state) {
@@ -769,6 +973,128 @@ function census(state) {
   }
 }
 
+function shuffle(rng, list) {
+  for (let i = list.length - 1; i > 0; i--) {
+    const j = (rng() * (i + 1)) | 0;
+    const tmp = list[i];
+    list[i] = list[j];
+    list[j] = tmp;
+  }
+  return list;
+}
+
+/** Cards sit off the best gate column, so grabbing one means leaving the multiplier. */
+function offerXs(state, n) {
+  const best = columnAim(state, state.bestCol);
+  const lane = LANE_R - LANE_L;
+  const candidates = [];
+  for (let i = 0; i < state.cols; i++) {
+    if (i === state.bestCol) continue;
+    candidates.push(columnAim(state, i));
+  }
+  candidates.push(LANE_L + lane * 0.2, LANE_L + lane * 0.5, LANE_L + lane * 0.8);
+  const xs = [];
+  for (let i = 0; i < candidates.length && xs.length < n; i++) {
+    const x = clamp(candidates[i], LANE_L + 42, LANE_R - 42);
+    if (Math.abs(x - best) < 48) continue;
+    if (xs.some((v) => Math.abs(v - x) < 62)) continue;
+    xs.push(x);
+  }
+  if (xs.length < n) {
+    xs.length = 0;
+    for (let i = 0; i < n; i++) xs.push(LANE_L + lane * ((i + 1) / (n + 1)));
+  }
+  return xs;
+}
+
+function spawnCardRow(state) {
+  const n = state.level < 3 ? 2 : 3;
+  const pool = shuffle(state.cardRng, buffPool(state.level).slice());
+  const kinds = pool.slice(0, n);
+  const xs = offerXs(state, kinds.length);
+  const group = state.cardSerial++;
+  const speed = 86 + state.level * 3.4;
+  const y = state.layout.baseBottom + 18;
+  for (let i = 0; i < kinds.length; i++) {
+    state.cards.push({
+      x: xs[i],
+      y,
+      w: 74,
+      h: 40,
+      kind: kinds[i],
+      group,
+      vy: speed,
+      alive: true,
+    });
+  }
+  floatText(state, VIEW_W * 0.5, (state.layout.baseBottom + state.cannonY) * 0.42, "PICK ONE", "#f4fbff");
+  const floater = state.floaters[(state.fCursor + MAX_FLOATERS - 1) % MAX_FLOATERS];
+  floater.life = 1.5;
+  floater.max = 1.5;
+}
+
+function takeCard(state, card) {
+  const info = BUFFS[card.kind];
+  state.sfx.pick = 1;
+  state.flash = Math.min(1, state.flash + 0.28);
+  state.flashRGB = "210,245,255";
+  state.shake = Math.min(8, state.shake + 2);
+  floatText(state, card.x, card.y, info.name, info.color);
+  if (card.kind === "shield") {
+    state.shieldT = info.dur;
+    state.shieldHp = 26 + state.level * 2;
+    return;
+  }
+  if (card.kind === "freeze") {
+    state.freezeT = info.dur;
+    state.sfx.freeze = 1;
+    return;
+  }
+  state.shot = { id: card.kind, t: info.dur, max: info.dur };
+}
+
+function moveCards(state, dt) {
+  let taken = null;
+  let bestDist = 1e9;
+  const catchTop = state.cannonY - 20;
+  for (let i = 0; i < state.cards.length; i++) {
+    const c = state.cards[i];
+    c.y += c.vy * dt;
+    if (c.y < catchTop || c.y > state.cannonY + 26) continue;
+    const dist = Math.abs(state.cannonX - c.x);
+    if (dist < 38 && dist < bestDist) {
+      bestDist = dist;
+      taken = c;
+    }
+  }
+  if (taken) {
+    const group = taken.group;
+    takeCard(state, taken);
+    for (let i = state.cards.length - 1; i >= 0; i--) {
+      if (state.cards[i].group === group) state.cards.splice(i, 1);
+    }
+    return;
+  }
+  for (let i = state.cards.length - 1; i >= 0; i--) {
+    if (state.cards[i].y > state.layout.viewH + 36) state.cards.splice(i, 1);
+  }
+}
+
+function tickBuffs(state, dt) {
+  if (state.shot) {
+    state.shot.t -= dt;
+    if (state.shot.t <= 0) state.shot = null;
+  }
+  if (state.shieldT > 0) {
+    state.shieldT -= dt;
+    if (state.shieldT <= 0) {
+      state.shieldT = 0;
+      state.shieldHp = 0;
+    }
+  }
+  if (state.freezeT > 0) state.freezeT = Math.max(0, state.freezeT - dt);
+}
+
 function celebrate(state, dt) {
   state.party -= dt;
   if (state.party > 0) return;
@@ -831,16 +1157,18 @@ export function step(state, dt, input = {}) {
 
   if (state.phase === "play") {
     state.windup = Math.max(0, state.windup - dt);
+    tickBuffs(state, dt);
     if (input.firing) {
       state.fireCd -= dt;
       let shots = 0;
+      const every = shotInterval(state);
       while (state.fireCd <= 0 && shots < 3) {
         fire(state);
-        state.fireCd += state.tune.fireEvery;
+        state.fireCd += every;
         shots += 1;
       }
     } else {
-      state.fireCd = Math.min(state.fireCd, state.tune.fireEvery);
+      state.fireCd = Math.min(state.fireCd, shotInterval(state));
     }
     if (state.windup <= 0) {
       state.spawnT -= dt;
@@ -848,7 +1176,13 @@ export function step(state, dt, input = {}) {
         state.spawnT += state.tune.spawnEvery;
         spawnEnemies(state);
       }
+      state.cardT -= dt;
+      if (state.cardT <= 0 && state.cards.length === 0) {
+        spawnCardRow(state);
+        state.cardT = Math.max(7.2, 12.4 - state.level * 0.22);
+      }
     }
+    moveCards(state, dt);
   }
 
   moveRunners(state, dt);
